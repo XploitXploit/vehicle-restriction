@@ -1,0 +1,16 @@
+FROM python:3.9
+#RUN useradd -u 8877 --create-home userunner
+#ENV PATH="/home/userunner/.local/bin:$PATH"
+ENV DOCKER_BUILDKIT=1 
+#USER userunner
+WORKDIR /app
+COPY requirements.txt /app/
+COPY requirements_test.txt /app/
+RUN pip install --no-cache-dir --upgrade \
+    -r /app/requirements.txt \
+    -r /app/requirements_test.txt \
+    pip install --no-cache-dir cryptography==2.1.4 
+COPY init.sql /docker-entrypoint-initdb.d/
+COPY data.sql /docker-entrypoint-initdb.d/
+COPY .coveragerc /app/
+COPY . /app/

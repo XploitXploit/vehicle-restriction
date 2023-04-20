@@ -1,0 +1,136 @@
+definitions:
+  steps:
+    - step: &build-image-and-push-gcr-deploy-brasil
+        name: BUILD-AND-PUSH-BR
+        services:
+          - docker
+        image: google/cloud-sdk:alpine
+        script:
+          - docker build -t gcr.io/arquitectura-gowgo-brasil/bms-vehicle-restriction-service .
+          # # Authenticating with the service account key file
+          - echo $GCLOUD_API_KEYFILE | base64 -d > ./gcloud-api-key.json
+          - gcloud auth activate-service-account --key-file gcloud-api-key.json
+          - gcloud config set project $GCLOUD_PROJECT
+          # # Tag container & push
+          - export TAG=BITBUCKET_$BITBUCKET_BUILD_NUMBER
+          - export IMAGE_NAME=gcr.io/arquitectura-gowgo-brasil/bms-vehicle-restriction-service:${TAG}
+          - docker tag gcr.io/arquitectura-gowgo-brasil/bms-vehicle-restriction-service ${IMAGE_NAME}
+          
+          # # Login to google docker hub
+          - cat ./gcloud-api-key.json | docker login -u _json_key --password-stdin https://gcr.io
+          - docker push ${IMAGE_NAME}
+          - echo "Deploying to production environment"
+          # replace BUILD_NUMBER in manifest
+          - sed -i "s/BUILD_NUMBER/$TAG/" jenkins/config/bms-vehicle-restriction-service.yml
+          - cat ./jenkins/config/bms-vehicle-restriction-service.yml
+          - pipe: atlassian/google-gke-kubectl-run:2.1.0
+            variables:
+              KEY_FILE: $GCLOUD_K8_KEY
+              PROJECT: $GCLOUD_PROJECT
+              COMPUTE_ZONE: southamerica-east1-a
+              CLUSTER_NAME: gowgobrv1
+              KUBECTL_COMMAND: 'apply'
+              RESOURCE_PATH: './jenkins/config/bms-vehicle-restriction-service.yml'
+              DEBUG: 'True'
+
+    - step: &build-image-and-push-gcr-deploy-chile
+        name: BUILD-AND-PUSH-CL
+        services:
+          - docker
+        image: google/cloud-sdk:alpine
+        script:
+          - docker build -t gcr.io/arquitectura-gowgo-brasil/bms-vehicle-restriction-service .
+          # # Authenticating with the service account key file
+          - echo $GCLOUD_API_KEYFILE | base64 -d > ./gcloud-api-key.json
+          - gcloud auth activate-service-account --key-file gcloud-api-key.json
+          - gcloud config set project $GCLOUD_PROJECT
+          # # Tag container & push
+          - export TAG=$(echo "$BITBUCKET_TAG" | sed -e "s/v//g")
+          - export SUFFIX=$([[ ! -z "$TAG" ]] && echo ":$TAG" || echo "")
+          - export IMAGE_NAME=gcr.io/arquitectura-gowgo-brasil/bms-vehicle-restriction-service${SUFFIX}
+          - docker tag gcr.io/arquitectura-gowgo-brasil/bms-vehicle-restriction-service ${IMAGE_NAME}
+          # # Login to google docker hub
+          - cat ./gcloud-api-key.json | docker login -u _json_key --password-stdin https://gcr.io
+          - docker push ${IMAGE_NAME}
+          - echo "Deploying to production environment"
+          # replace BUILD_NUMBER in manifest
+          - sed -i "s/BUILD_NUMBER/$SUFFIX/" jenkins/config/bms-vehicle-restriction-service.yml
+          - cat ./jenkins/config/bms-vehicle-restriction-service.yml
+          # - pipe: atlassian/google-gke-kubectl-run:latest
+          #   variables:
+          #     KEY_FILE: $GCLOUD_API_KEYFILE
+          #     PROJECT: $GCLOUD_PROJECT
+          #     COMPUTE_ZONE: '<string>'
+          #     CLUSTER_NAME: '<string>'
+          #     KUBECTL_COMMAND: '<string>'
+
+    - step: &docker-compose-test-check
+        name: PYTEST
+        image: python:3.9-buster
+        services:
+          - docker
+        caches:
+          - docker
+          - pip
+        script:
+          - pip install docker-compose
+          - docker-compose -f ./docker-compose.test.yml down -v
+          - docker-compose -f docker-compose.test.yml build
+          - docker-compose -f docker-compose.test.yml up --abort-on-container-exit --exit-code-from app
+
+    - step: &flake8-linter
+        name: FLAKE8
+        image: python:3.9-buster
+        script:
+          # Enforce style consistency across Python projects https://flake8.pycqa.org/en/latest/manpage.html
+          - pip install flake8
+          - flake8 .
+
+    - step: &update-development-branch
+        name: Update development branch
+        clone:
+          depth: full
+        script:
+          - git pull
+          - git checkout development --
+          - 'git merge origin/main -m "ci: merged main into development branch [skip ci]"'
+          - git push
+
+pipelines:
+  default:
+    - parallel:
+        - step: *docker-compose-test-check
+        - step: *flake8-linter
+  branches:
+    "main":
+      - step: *docker-compose-test-check
+      - step: *flake8-linter
+      - step:
+          <<: *build-image-and-push-gcr-deploy-brasil
+          deployment: Production_BR
+      # - step:
+      #     <<: *build-image-and-push-gcr-deploy-chile
+      #     deployment: Production_CL
+      - step: *update-development-branch
+
+  custom:
+    merge-dev-to-master:
+      - step:
+          clone:
+            depth: full
+          script:
+            - git fetch
+            - git checkout main
+            - git merge --no-commit --no-ff origin/development
+            - 'git commit -m "ci: merged development branch into main" || echo "No changes to commit"'
+            - git push origin main
+
+    deploy-production-backend-br:
+      - step:
+          <<: *build-image-and-push-gcr-deploy-brasil
+          deployment: Production_BR
+
+    deploy-production-backend-cl:
+      - step:
+          <<: *build-image-and-push-gcr-deploy-chile
+          deployment: Production_CL

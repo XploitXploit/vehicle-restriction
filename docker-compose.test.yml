@@ -1,0 +1,35 @@
+version: "2.2"
+services:
+  db:
+    image: mysql:latest
+    command: --default-authentication-plugin=mysql_native_password
+    volumes:
+      - "./init.sql:/docker-entrypoint-initdb.d/1.sql"
+      - "./data.sql:/docker-entrypoint-initdb.d/2.sql"
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_USER: test
+      MYSQL_PASSWORD: test
+    ports:
+      - 3307:3306
+    healthcheck:
+      test: ["CMD", 'mysqladmin', 'ping', '-h', 'localhost', '-u', 'root', '-p$$MYSQL_ROOT_PASSWORD' ]
+      timeout: 40s
+      retries: 10
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile.test
+    env_file:
+      - test.env
+    links:
+      - db
+    environment:
+      - MYSQL_TEST_CONN=mysql+pymysql://root:root@db:3306/test
+      - MYSQL_TEST_CONN_LOG=mysql+pymysql://root:root@db:3306/test_log
+    depends_on:
+      db:
+        condition: service_healthy
+    command: >
+      sh -c 'coverage run --source=app -m pytest --capture=no && coverage report -m'

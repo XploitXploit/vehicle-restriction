@@ -1,0 +1,11 @@
+[flake8]
+# compatibility with black
+# B warnings require to install flake8-bugbear
+# E722 is redundant if B001 is used, so ignored
+# E203 and 501 are not necessary with B warnings active
+# B9 includes all opinionated warnings from bearbug
+# T depend on flake8-fixme 100,101,102 -> FIXME, TODO, XXX
+max-line-length = 88
+select = C,E,F,W,B,B9,T100,T102
+ignore = E121, E123, E126, E24, E226, E501, E704, W503, W504
+extend-ignore = E203,E501,E722
